@@ -2,6 +2,8 @@ import os
 import time
 import subprocess
 import threading
+import math
+import zipfile
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 import yt_dlp
@@ -73,7 +75,8 @@ def download():
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info_dict = ydl.extract_info(url, download=True)
+            duration = info_dict.get('duration', 0)
             
         # Find the final downloaded file
         final_output_path = None
@@ -88,25 +91,42 @@ def download():
             raise Exception("Downloaded file not found in tmp directory.")
             
         if is_gif:
-            gif_output_path = os.path.join(TMP_DIR, f"{file_id}.gif")
-            print(f"Converting {final_output_path} to GIF...")
-            # Scratch向けの最適化: 解像度240px、10fps、最大60秒
-            cmd = [
-                ffmpeg_path, '-y', '-i', final_output_path,
-                '-t', '60',
-                '-vf', 'fps=10,scale=240:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
-                '-loop', '0',
-                gif_output_path
-            ]
-            try:
+            print(f"Converting {final_output_path} to GIF... (Duration: {duration}s)")
+            if duration > 60:
+                zip_path = os.path.join(TMP_DIR, f"{file_id}.zip")
+                num_chunks = math.ceil(duration / 30)
+                
+                with zipfile.ZipFile(zip_path, 'w') as zipf:
+                    for i in range(num_chunks):
+                        start_time = i * 30
+                        chunk_output = os.path.join(TMP_DIR, f"{file_id}_part{i+1}.gif")
+                        cmd = [
+                            ffmpeg_path, '-y', '-ss', str(start_time), '-t', '30', '-i', final_output_path,
+                            '-vf', 'fps=10,scale=iw/2:-1,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
+                            '-loop', '0',
+                            chunk_output
+                        ]
+                        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        zipf.write(chunk_output, arcname=f"youtube_part{i+1}.gif")
+                        os.remove(chunk_output)
+                        
+                os.remove(final_output_path)
+                final_output_path = zip_path
+                final_ext = 'zip'
+                print(f"ZIP Conversion complete: {final_output_path}")
+            else:
+                gif_output_path = os.path.join(TMP_DIR, f"{file_id}.gif")
+                cmd = [
+                    ffmpeg_path, '-y', '-i', final_output_path,
+                    '-vf', 'fps=10,scale=240:-1,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5',
+                    '-loop', '0',
+                    gif_output_path
+                ]
                 subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                os.remove(final_output_path) # 元の動画を削除
+                os.remove(final_output_path)
                 final_output_path = gif_output_path
                 final_ext = 'gif'
                 print(f"GIF Conversion complete: {final_output_path}")
-            except subprocess.CalledProcessError as e:
-                print(f"FFmpeg Error: {e.stderr.decode()}")
-                raise Exception("Failed to convert video to GIF.")
 
         print(f"Download complete: {final_output_path}")
         
