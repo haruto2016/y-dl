@@ -43,6 +43,7 @@ def process_download(task_id, url, type_val):
         'quiet': False,
         'no_warnings': True,
         'ffmpeg_location': ffmpeg_path,
+        'extractor_args': {'youtube': ['player_client=android,web']},
     }
     
     if is_audio:
