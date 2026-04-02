@@ -16,7 +16,9 @@ TMP_DIR = 'tmp'
 os.makedirs(TMP_DIR, exist_ok=True)
 os.makedirs('public', exist_ok=True)
 
-# Function to delete files after a delay
+# Global dict to hold background task status (works fine for 1 worker processes on Free Render)
+tasks = {}
+
 def remove_file_delayed(path, delay=10):
     def delayed_delete():
         time.sleep(delay)
@@ -25,28 +27,15 @@ def remove_file_delayed(path, delay=10):
                 os.remove(path)
                 print(f"Deleted temp file: {path}")
         except Exception as e:
-            print(f"Failed to delete {path}: {e}")
+            pass
     threading.Thread(target=delayed_delete).start()
 
-@app.route('/')
-def serve_index():
-    return app.send_static_file('index.html')
-
-@app.route('/download', methods=['GET'])
-def download():
-    url = request.args.get('url')
-    type = request.args.get('type')
-    
-    if not url:
-        return jsonify({'error': 'URL is required'}), 400
-
-    file_id = str(int(time.time() * 1000))
-    is_audio = type == 'audio'
-    is_gif = type == 'gif'
+def process_download(task_id, url, type_val):
+    file_id = task_id
+    is_audio = type_val == 'audio'
+    is_gif = type_val == 'gif'
     
     outtmpl_path = os.path.join(TMP_DIR, f"{file_id}.%(ext)s")
-    
-    # Use imageio_ffmpeg to get the ffmpeg binary so the user doesn't need to install it locally
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
     
     ydl_opts = {
@@ -64,21 +53,17 @@ def download():
             'preferredquality': '192',
         }]
     elif is_gif:
-        # GIF変換用：なるべく小さめのファイルサイズをダウンロードして変換を早くする
         ydl_opts['format'] = 'bestvideo[height<=360][ext=mp4]/bestvideo[ext=mp4]/best[ext=mp4]/best'
     else:
-        # Windowsの標準プレイヤーで再生できるように、AV1/VP9ではなくH.264（avc）コーデックを優先して取得します
         ydl_opts['format'] = 'bestvideo[ext=mp4][vcodec^=avc]+bestaudio[ext=m4a]/best[ext=mp4][vcodec^=avc]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
         ydl_opts['merge_output_format'] = 'mp4'
 
-    print(f"Starting download for: {url}")
-    
+    print(f"Starting download for task {task_id}: {url}")
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=True)
             duration = info_dict.get('duration', 0)
             
-        # Find the final downloaded file
         final_output_path = None
         final_ext = ''
         for f in os.listdir(TMP_DIR):
@@ -113,7 +98,6 @@ def download():
                 os.remove(final_output_path)
                 final_output_path = zip_path
                 final_ext = 'zip'
-                print(f"ZIP Conversion complete: {final_output_path}")
             else:
                 gif_output_path = os.path.join(TMP_DIR, f"{file_id}.gif")
                 cmd = [
@@ -126,22 +110,63 @@ def download():
                 os.remove(final_output_path)
                 final_output_path = gif_output_path
                 final_ext = 'gif'
-                print(f"GIF Conversion complete: {final_output_path}")
 
-        print(f"Download complete: {final_output_path}")
-        
-        # Schedule cleanup after sending the file
-        remove_file_delayed(final_output_path, delay=30)
-            
-        return send_file(
-            final_output_path, 
-            as_attachment=True, 
-            download_name=f"youtube_{file_id}.{final_ext}"
-        )
+        tasks[task_id]['status'] = 'completed'
+        tasks[task_id]['file_path'] = final_output_path
+        tasks[task_id]['ext'] = final_ext
+        print(f"Task {task_id} complete: {final_output_path}")
         
     except Exception as e:
-        print(f"Download Error: {str(e)}")
-        return jsonify({'error': 'Failed to download media', 'details': str(e)}), 500
+        print(f"Task {task_id} Error: {str(e)}")
+        tasks[task_id]['status'] = 'error'
+        tasks[task_id]['error'] = str(e)
+
+
+@app.route('/')
+def serve_index():
+    return app.send_static_file('index.html')
+
+@app.route('/download', methods=['GET'])
+def download():
+    url = request.args.get('url')
+    type_val = request.args.get('type')
+    
+    if not url:
+        return jsonify({'error': 'URL is required'}), 400
+
+    task_id = str(int(time.time() * 1000))
+    tasks[task_id] = {'status': 'processing', 'file_path': None, 'error': None, 'ext': None}
+    
+    # Start background execution!
+    threading.Thread(target=process_download, args=(task_id, url, type_val)).start()
+    
+    return jsonify({'task_id': task_id})
+
+@app.route('/status', methods=['GET'])
+def status():
+    task_id = request.args.get('task_id')
+    task = tasks.get(task_id)
+    if not task:
+        return jsonify({'error': 'Task not found'}), 404
+    return jsonify({'status': task['status'], 'error': task['error']})
+
+@app.route('/download_file', methods=['GET'])
+def download_file():
+    task_id = request.args.get('task_id')
+    task = tasks.get(task_id)
+    if not task or task['status'] != 'completed':
+        return jsonify({'error': 'File not ready'}), 404
+        
+    file_path = task['file_path']
+    ext = task['ext']
+    
+    remove_file_delayed(file_path, delay=30)
+    
+    return send_file(
+        file_path, 
+        as_attachment=True, 
+        download_name=f"youtube_{task_id}.{ext}"
+    )
 
 if __name__ == '__main__':
     print("Starting server on http://localhost:3000")

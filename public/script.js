@@ -33,7 +33,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const apiUrl = `/download?url=${encodeURIComponent(url)}&type=${type}`;
-            
             const response = await fetch(apiUrl);
             
             if (!response.ok) {
@@ -41,12 +40,45 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(errorData.error || 'Download failed');
             }
 
+            const data = await response.json();
+            const taskId = data.task_id;
+
+            // Poll the backend every 3 seconds to see if the execution finished
+            const checkStatus = async () => {
+                return new Promise((resolve, reject) => {
+                    const interval = setInterval(async () => {
+                        try {
+                            const statusRes = await fetch(`/status?task_id=${taskId}`);
+                            const statusData = await statusRes.json();
+                            
+                            if (statusData.status === 'completed') {
+                                clearInterval(interval);
+                                resolve();
+                            } else if (statusData.status === 'error') {
+                                clearInterval(interval);
+                                reject(new Error(statusData.error || 'Conversion error'));
+                            }
+                        } catch (e) {
+                            clearInterval(interval);
+                            reject(e);
+                        }
+                    }, 3000);
+                });
+            };
+
+            await checkStatus();
+
+            // After completion, fetch the prepared file
+            const fileUrl = `/download_file?task_id=${taskId}`;
+            const fileRes = await fetch(fileUrl);
+            if (!fileRes.ok) throw new Error('Failed to download file');
+
             let ext = 'mp4';
             if (type === 'audio') ext = 'mp3';
             else if (type === 'gif') ext = 'gif';
             
-            let filename = `youtube_${Date.now()}.${ext}`;
-            const disposition = response.headers.get('content-disposition');
+            let filename = `youtube_${taskId}.${ext}`;
+            const disposition = fileRes.headers.get('content-disposition');
             if (disposition && disposition.indexOf('attachment') !== -1) {
                 const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
                 const matches = filenameRegex.exec(disposition);
@@ -55,7 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            const blob = await response.blob();
+            const blob = await fileRes.blob();
             const downloadUrl = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.style.display = 'none';
