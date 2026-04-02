@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const urlInput = document.getElementById('url-input');
     const btnVideo = document.getElementById('btn-video');
     const btnAudio = document.getElementById('btn-audio');
+    const btnGif = document.getElementById('btn-gif');
     const errorMsg = document.getElementById('error-msg');
     const loadingOverlay = document.getElementById('loading-overlay');
     const loadingText = document.getElementById('loading-text');
@@ -24,9 +25,11 @@ document.addEventListener('DOMContentLoaded', () => {
         urlInput.style.borderColor = 'rgba(255, 255, 255, 0.1)';
         
         loadingOverlay.classList.remove('hidden');
-        loadingText.textContent = type === 'audio' 
-            ? '音声を抽出・ダウンロード中...' 
-            : 'ビデオをダウンロード中...';
+        
+        let loadingTextContent = 'ビデオをダウンロード中...';
+        if (type === 'audio') loadingTextContent = '音声を抽出・ダウンロード中...';
+        else if (type === 'gif') loadingTextContent = 'Scratch用GIFに変換中 (かなり時間がかかります)...';
+        loadingText.textContent = loadingTextContent;
 
         try {
             const apiUrl = `/download?url=${encodeURIComponent(url)}&type=${type}`;
@@ -38,7 +41,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(errorData.error || 'Download failed');
             }
 
-            let filename = `youtube_${Date.now()}.${type === 'audio' ? 'mp3' : 'mp4'}`;
+            let ext = 'mp4';
+            if (type === 'audio') ext = 'mp3';
+            else if (type === 'gif') ext = 'gif';
+            
+            let filename = `youtube_${Date.now()}.${ext}`;
             const disposition = response.headers.get('content-disposition');
             if (disposition && disposition.indexOf('attachment') !== -1) {
                 const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
@@ -71,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     btnVideo.addEventListener('click', () => handleDownload('video'));
     btnAudio.addEventListener('click', () => handleDownload('audio'));
+    btnGif.addEventListener('click', () => handleDownload('gif'));
     
     urlInput.addEventListener('input', () => {
         if (errorMsg.classList.contains('visible')) {

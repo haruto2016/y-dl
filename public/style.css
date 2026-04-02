@@ -155,6 +155,7 @@ input[type="text"]:focus {
     display: flex;
     gap: 1rem;
     justify-content: center;
+    flex-wrap: wrap;
 }
 
 .btn {
@@ -210,6 +211,17 @@ input[type="text"]:focus {
 .btn-audio:hover {
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(245, 87, 108, 0.6);
+}
+
+.btn-gif {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+    min-width: 140px;
+}
+
+.btn-gif:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(79, 172, 254, 0.6);
 }
 
 .icon {
